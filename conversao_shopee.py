@@ -1,11 +1,10 @@
 import pandas as pd
 import re
 import unicodedata
-from pathlib import Path
 import streamlit as st
 
 # =============================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES DE SUPORTE
 # =============================
 def normalizar_texto(texto):
     if pd.isna(texto):
@@ -16,52 +15,71 @@ def normalizar_texto(texto):
     texto = re.sub(r"\s+", " ", texto)
     return texto
 
+def limpar_colunas(df):
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.replace("\n", " ")
+        .str.replace("\r", " ")
+    )
+    return df
+
+def encontrar_coluna(df, termos):
+    for termo in termos:
+        for col in df.columns:
+            if termo.lower() in col.lower():
+                return col
+    raise KeyError(f"Coluna não encontrada. Esperado algo como: {termos}")
+
 def extrair_rua_numero(endereco):
     if pd.isna(endereco):
         return None, None
 
-    rua_match = re.search(r"^(.*?),\s*\d+", endereco)
-    numero_match = re.search(r",\s*(\d+)", endereco)
+    match = re.search(r"^(.*?),\s*(\d+)", endereco)
+    if match:
+        return match.group(1).strip(), match.group(2)
+    return endereco.strip(), None
 
-    rua = rua_match.group(1).strip() if rua_match else endereco
-    numero = numero_match.group(1) if numero_match else None
-
-    return rua, numero
-
-def formatar_ordens(lista_ordens):
-    lista_ordens = sorted(lista_ordens)
-
-    if len(lista_ordens) == 1:
-        return f"Ordem {lista_ordens[0]}"
-
-    texto = ", ".join(str(o) for o in lista_ordens[:-1])
-    texto += f" e {lista_ordens[-1]}"
+def formatar_ordens(ordens):
+    ordens = sorted(ordens)
+    if len(ordens) == 1:
+        return f"Ordem {ordens[0]}"
+    texto = ", ".join(str(o) for o in ordens[:-1])
+    texto += f" e {ordens[-1]}"
     return f"Ordens para esta parada: {texto}"
 
 # =============================
-# PROCESSAMENTO
+# PROCESSAMENTO PRINCIPAL
 # =============================
 def processar_dataframe(df):
-    df = df.copy()
+    df = limpar_colunas(df)
 
-    df[["Rua", "Numero"]] = df["Destination Address"].apply(
+    col_endereco = encontrar_coluna(df, ["destination", "address"])
+    col_sequence = encontrar_coluna(df, ["sequence"])
+    col_stop = encontrar_coluna(df, ["stop"])
+    col_city = encontrar_coluna(df, ["city"])
+    col_bairro = encontrar_coluna(df, ["bairro", "neighborhood"])
+    col_cep = encontrar_coluna(df, ["zip", "postal"])
+
+    df[["Rua", "Numero"]] = df[col_endereco].apply(
         lambda x: pd.Series(extrair_rua_numero(x))
     )
 
     df["Rua_norm"] = df["Rua"].apply(normalizar_texto)
     df["Numero_norm"] = df["Numero"].astype(str)
 
-    df["Sequence_num"] = df["Sequence"].astype(int)
-    df["Stop_num"] = df["Stop"].astype(int)
+    df["Sequence_num"] = df[col_sequence].astype(int)
+    df["Stop_num"] = df[col_stop].astype(int)
 
     agrupado = (
         df.groupby(["Rua_norm", "Numero_norm"], as_index=False)
         .agg({
             "Rua": "first",
             "Numero": "first",
-            "Bairro": "first",
-            "City": "first",
-            "Zipcode/Postal code": "first",
+            col_bairro: "first",
+            col_city: "first",
+            col_cep: "first",
             "Sequence_num": list,
             "Stop_num": list
         })
@@ -76,17 +94,17 @@ def processar_dataframe(df):
     saida = pd.DataFrame()
     saida["Stop Name"] = agrupado["Stop_final"].apply(lambda x: f"Parada {x}")
     saida["Address"] = agrupado["Rua"] + ", " + agrupado["Numero"]
-    saida["Secondary Address Line"] = agrupado["Bairro"]
-    saida["City"] = agrupado["City"]
+    saida["Secondary Address Line"] = agrupado[col_bairro]
+    saida["City"] = agrupado[col_city]
     saida["State"] = "São Paulo"
-    saida["Zip Code"] = agrupado["Zipcode/Postal code"]
+    saida["Zip Code"] = agrupado[col_cep]
     saida["Observações"] = agrupado["Observações"]
     saida["Total de Pacotes"] = agrupado["Total de Pacotes"]
 
     return saida
 
 # =============================
-# STREAMLIT UI
+# INTERFACE STREAMLIT
 # =============================
 st.set_page_config(
     page_title="Agrupador de Paradas - Circuit",
@@ -94,38 +112,30 @@ st.set_page_config(
 )
 
 st.title("📦 Agrupador de Paradas por Endereço")
-st.write(
-    "Faça upload do arquivo Excel e gere automaticamente o arquivo "
-    "com paradas consolidadas para uso no Circuit."
-)
+st.write("Compatível com desktop e mobile.")
 
-arquivo = st.file_uploader(
-    "Selecione o arquivo Excel",
-    type=["xlsx"]
-)
+arquivo = st.file_uploader("Selecione o arquivo Excel", type=["xlsx"])
 
 if arquivo:
     try:
         df_original = pd.read_excel(arquivo)
 
-        st.success("Arquivo carregado com sucesso!")
-        st.write("Pré-visualização:")
-        st.dataframe(df_original.head(10))
+        st.success("Arquivo carregado com sucesso")
+        st.write("Colunas detectadas:")
+        st.write(list(df_original.columns))
 
         if st.button("🚀 Processar arquivo"):
             df_saida = processar_dataframe(df_original)
 
-            st.success("Arquivo processado com sucesso!")
-            st.write("Resultado final:")
+            st.success("Arquivo processado com sucesso")
             st.dataframe(df_saida)
 
-            # Gerar Excel em memória
-            output_path = "saida_circuit.xlsx"
-            df_saida.to_excel(output_path, index=False)
+            output_file = "saida_circuit.xlsx"
+            df_saida.to_excel(output_file, index=False)
 
-            with open(output_path, "rb") as f:
+            with open(output_file, "rb") as f:
                 st.download_button(
-                    label="⬇️ Baixar arquivo Excel",
+                    "⬇️ Baixar Excel",
                     data=f,
                     file_name="saida_circuit.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
