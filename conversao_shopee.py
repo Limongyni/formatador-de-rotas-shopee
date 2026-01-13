@@ -103,7 +103,7 @@ def processar_dataframe(df):
 
     saida = pd.DataFrame()
     saida["Stop Name"] = agrupado["Stop_final"].apply(lambda x: f"Parada {x}")
-    saida["Address"] = agrupado["Rua"] + ", " + agrupado["Numero"]
+    saida["Address Line"] = agrupado["Rua"] + ", " + agrupado["Numero"]
     saida["Secondary Address Line"] = agrupado["Bairro"]
     saida["City"] = agrupado["City"]
     saida["State"] = "São Paulo"
@@ -152,3 +152,4 @@ if arquivo:
 
     except Exception as e:
         st.error(f"Erro ao processar o arquivo: {e}")
+
