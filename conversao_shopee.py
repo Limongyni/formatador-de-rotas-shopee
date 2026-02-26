@@ -52,7 +52,12 @@ def extrair_rua_numero(endereco):
 
 
 def formatar_ordens(lista_ordens):
-    lista_ordens = sorted([o for o in lista_ordens if pd.notna(o)])
+    lista_ordens = [o for o in lista_ordens if pd.notna(o)]
+
+    if len(lista_ordens) == 0:
+        return "Ordem não identificada"
+
+    lista_ordens = sorted(lista_ordens)
 
     if len(lista_ordens) == 1:
         return f"Ordem {lista_ordens[0]}"
@@ -65,12 +70,12 @@ def formatar_ordens(lista_ordens):
 def extrair_numero(valor):
     if pd.isna(valor):
         return None
-    
+
     valor = str(valor).strip()
-    
+
     if valor == "-" or valor == "":
         return None
-    
+
     match = re.search(r"\d+", valor)
     return int(match.group()) if match else None
 
@@ -95,21 +100,31 @@ def processar_dataframe(df):
     df["Sequence_num"] = df["Sequence"].apply(extrair_numero)
     df["Stop_num"] = df["Stop"].apply(extrair_numero)
 
-    # 🔹 Identificar extras
+    # 🔹 Identificar extras (quando Stop é None)
     df["Is_Extra"] = df["Stop_num"].isna()
 
+    # 🔹 Descobrir máximos válidos
     max_stop = df["Stop_num"].max()
+    max_sequence = df["Sequence_num"].max()
+
     if pd.isna(max_stop):
         max_stop = 0
 
+    if pd.isna(max_sequence):
+        max_sequence = 0
+
     extras_qtd = df["Is_Extra"].sum()
 
-    # 🔹 Gerar numeração para extras
+    # 🔹 Gerar números automáticos
     if extras_qtd > 0:
-        novos_numeros = range(int(max_stop) + 1, int(max_stop) + 1 + extras_qtd)
-        df.loc[df["Is_Extra"], "Stop_num"] = list(novos_numeros)
+        novos_stops = range(int(max_stop) + 1, int(max_stop) + 1 + extras_qtd)
+        novos_sequences = range(int(max_sequence) + 1, int(max_sequence) + 1 + extras_qtd)
+
+        df.loc[df["Is_Extra"], "Stop_num"] = list(novos_stops)
+        df.loc[df["Is_Extra"], "Sequence_num"] = list(novos_sequences)
 
     df["Stop_num"] = df["Stop_num"].astype(int)
+    df["Sequence_num"] = df["Sequence_num"].astype(int)
 
     # 🔹 Agrupamento
     agrupado = (
@@ -129,10 +144,10 @@ def processar_dataframe(df):
     agrupado["Stop_final"] = agrupado["Stop_num"].apply(min)
     agrupado["Observações"] = agrupado["Sequence_num"].apply(formatar_ordens)
     agrupado["Total de Pacotes"] = agrupado["Sequence_num"].apply(
-        lambda x: f"{len([i for i in x if pd.notna(i)])} pacotes"
+        lambda x: f"{len(x)} pacotes"
     )
 
-    # 🔹 Construção da saída
+    # 🔹 Construção saída
     saida = pd.DataFrame()
 
     saida["Stop Name"] = agrupado.apply(
@@ -150,7 +165,7 @@ def processar_dataframe(df):
     saida["Observações"] = agrupado["Observações"]
     saida["Total de Pacotes"] = agrupado["Total de Pacotes"]
 
-    # 🔹 Ordenação final (Extras no final)
+    # 🔹 Ordenação final
     saida["Ordem_sort"] = saida["Stop Name"].apply(
         lambda x: int(str(x).split()[0])
     )
@@ -194,7 +209,7 @@ if arquivo:
 
             if extras_qtd > 0:
                 st.warning(
-                    f"⚠ {extras_qtd} parada(s) foram geradas automaticamente como 'Extra'."
+                    f"⚠ {extras_qtd} parada(s) e sequence(s) foram geradas automaticamente como 'Extra'."
                 )
 
             st.dataframe(df_saida)
